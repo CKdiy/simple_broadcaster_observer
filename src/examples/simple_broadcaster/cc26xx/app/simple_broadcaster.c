@@ -163,7 +163,7 @@ tag_mac_struct tag_mac_list[DEFAULT_MAX_SCAN_RES];
 tag_inf_struct tag_inf_list[DEFAULT_MAX_SCAN_RES];
 
 static uint8 tag_count;    //Number of single discoveries
-static uint8 tag_index;   
+static uint8 tag_index; 
 
 // GAP - SCAN RSP data (max size = 31 bytes)
 static uint8 scanRspData[] =
@@ -207,56 +207,39 @@ static uint8 advertData[] =
   // discoverable mode (advertises indefinitely)
   0x02,   // length of this data
   GAP_ADTYPE_FLAGS,
-  GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED,
+  GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED|GAP_ADTYPE_FLAGS_GENERAL,
 
-#ifndef BEACON_FEATURE
-
-  // three-byte broadcast of the data "1 2 3"
-  0x04,   // length of this data including the data type byte
-  GAP_ADTYPE_MANUFACTURER_SPECIFIC, // manufacturer specific adv data type
-  1,
-  2,
-  3
-
-#else
-
-  // 25 byte beacon advertisement data
-  // Preamble: Company ID - 0x000D for TI, refer to https://www.bluetooth.org/en-us/specification/assigned-numbers/company-identifiers
-  // Data type: Beacon (0x02)
-  // Data length: 0x15
-  // UUID: 00000000-0000-0000-0000-000000000000 (null beacon)
-  // Major: 1 (0x0001)
-  // Minor: 1 (0x0001)
-  // Measured Power: -59 (0xc5)
   0x1A, // length of this data including the data type byte
-  GAP_ADTYPE_MANUFACTURER_SPECIFIC, // manufacturer specific adv data type
-  0x0D, // Company ID - Fixed
-  0x00, // Company ID - Fixed
-  0x02, // Data Type - Fixed
-  0x15, // Data Length - Fixed
-  0x00, // UUID - Variable based on different use cases/applications
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
-  0x00, // UUID
+  GAP_ADTYPE_SERVICE_DATA, // manufacturer specific adv data type
+  0xFF,0xF0, //service uuid
+  
+  0x00, // rssi
+  
+  0xFF, // private data type
+  
+  0x14, // PRIVATE DATA length
+  
+  0x4C, 0x00,0x02,0x15, //default data
+  
+  0x0C,0x0C, //tag id
+	
+  0x00, //IO1 status
+  
+  0x00, //IO2 status
+  
+  0x00, 
+  0x00, 
+  0x00, 
+  0x00, 
+  0x00, 
+  0x00, 
+  0x00, 
+ 
   0x00, // Major
   0x01, // Major
   0x00, // Minor
   0x01, // Minor
-  0xc5  // Power - The 2's complement of the calibrated Tx Power
-
-#endif // !BEACON_FEATURE
+  0xD8  // rssi @ 1m
 };
 
 /*********************************************************************
