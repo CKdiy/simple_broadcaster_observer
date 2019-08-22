@@ -344,6 +344,7 @@ static void SimpleBLEBroadcaster_init(void)
 #endif // !BEACON_FEATURE
 	
     Board_initStatusPins();
+    Board_initLedPins();
 	
     // Create one-shot clocks for internal periodic events.
     Util_constructClock(&periodicClock, SimpleBLEPeripheral_clockHandler,
@@ -462,9 +463,10 @@ static void SimpleBLEBroadcaster_taskFxn(UArg a0, UArg a1)
          advertData[16] = iostatus1;
          advertData[17] = iostatus2;
 		 
+         Board_Led1Ctrl( Board_LED_ON );
          GAPRole_StartDiscovery( DEFAULT_DISCOVERY_MODE,
                               DEFAULT_DISCOVERY_ACTIVE_SCAN,
-                              DEFAULT_DISCOVERY_WHITE_LIST );	
+                              DEFAULT_DISCOVERY_WHITE_LIST );			 
 	  
          Util_startClock(&periodicClock);
       }
@@ -610,6 +612,7 @@ static void SimpleBLEBroadcasterObserver_processRoleEvent(gapPeriObsRoleEvent_t 
     case GAP_DEVICE_DISCOVERY_EVENT:
       // discovery complete
       GAPRole_CancelDiscovery();
+      Board_Led1Ctrl( Board_LED_OFF );
 	  
       ICall_freeMsg(pEvent);
       break;
