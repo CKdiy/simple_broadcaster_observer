@@ -70,6 +70,7 @@
 
 #include "simple_broadcaster.h"
 
+#include "taginf.h"
 /*********************************************************************
  * MACROS
  */
@@ -82,7 +83,7 @@
 #define DEFAULT_ADVERTISING_INTERVAL          160
 
    // Maximum number of scan responses
-#define DEFAULT_MAX_SCAN_RES                  20
+#define DEFAULT_MAX_SCAN_RES                  10
 
 // Scan parameters
 #define DEFAULT_SCAN_DURATION_600ms           600
@@ -157,6 +158,12 @@ static Clock_Struct periodicClock;
 
 // events flag for internal application events.
 static uint16_t events;
+
+tag_mac_struct tag_mac_list[DEFAULT_MAX_SCAN_RES];
+tag_inf_struct tag_inf_list[DEFAULT_MAX_SCAN_RES];
+
+static uint8 tag_count;    //Number of single discoveries
+static uint8 tag_index;   
 
 // GAP - SCAN RSP data (max size = 31 bytes)
 static uint8 scanRspData[] =
@@ -268,7 +275,7 @@ static void SimpleBLEBroadcaster_stateChangeCB(gaprole_States_t newState);
 
 static void SimpleBLEBroadcasterObserver_processRoleEvent(gapPeriObsRoleEvent_t *pEvent);
 static uint8_t SimpleBLEBroadcasterObserver_StateChangeCB(gapPeriObsRoleEvent_t *pEvent);
-static void SimpleBLEObserver_addDeviceInfo_Ex(uint8 *pAddr, uint8 *pData, uint8 datalen, uint8 rssi);
+static void SimpleBLEObserver_addDeviceInfo_Ex(uint8 *pAddr, uint8 *pData, uint8 datalen, int8 rssi);
 static uint8_t SimpleBLEBroadcaster_enqueueMsg(uint8_t event, uint8_t state, uint8_t *pData);
 /*********************************************************************
  * PROFILE CALLBACKS
@@ -456,7 +463,12 @@ static void SimpleBLEBroadcaster_taskFxn(UArg a0, UArg a1)
       if (events & SBP_PERIODIC_EVT)
       {
          events &= ~SBP_PERIODIC_EVT;
-	  
+		 
+         memset((void *)tag_mac_list, 0, tag_count*B_ADDR_LEN);
+         memset((void *)tag_inf_list, 0, tag_count*sizeof(tag_inf_struct));
+         tag_count = 0;
+         tag_index = 0;
+		 
          GAPRole_StartDiscovery( DEFAULT_DISCOVERY_MODE,
                               DEFAULT_DISCOVERY_ACTIVE_SCAN,
                               DEFAULT_DISCOVERY_WHITE_LIST );	
@@ -577,6 +589,9 @@ static void SimpleBLEBroadcasterObserver_processRoleEvent(gapPeriObsRoleEvent_t 
   {
 	case GAP_DEVICE_INIT_DONE_EVENT:
 	  {
+		tag_count = 0;
+		tag_index = 0;
+		
 		GAPRole_StartDiscovery( DEFAULT_DISCOVERY_MODE,
                                 DEFAULT_DISCOVERY_ACTIVE_SCAN,
                                 DEFAULT_DISCOVERY_WHITE_LIST );
@@ -611,6 +626,7 @@ static void SimpleBLEBroadcasterObserver_processRoleEvent(gapPeriObsRoleEvent_t 
   }
 }
 
+const uint8_t taguuid[6]={0xAB,0x81,0x90,0xD5,0xD1,0x1E};
 /*********************************************************************
  * @fn      SimpleBLEObserver_addDeviceInfo_Ex
  *
@@ -618,9 +634,54 @@ static void SimpleBLEBroadcasterObserver_processRoleEvent(gapPeriObsRoleEvent_t 
  *
  * @return  none
  */
-static void SimpleBLEObserver_addDeviceInfo_Ex(uint8 *pAddr, uint8 *pData, uint8 datalen, uint8 rssi)
+static void SimpleBLEObserver_addDeviceInfo_Ex(uint8 *pAddr, uint8 *pData, uint8 datalen, int8 rssi)
 {
-;
+	uint8 i;
+	uint8 majoroffset;
+	uint8 uuidoffset;
+	uint8 tagNum;
+	uint8 *ptr;
+	
+ 	if( (pAddr == NULL) || (pData == NULL) )
+	  return;
+	
+	if( TAG_ADV_DATA_LEN != datalen)
+	  return;
+	
+	ptr = pData;
+	
+	uuidoffset = TAG_ADV_UUID_OFFSET;
+	
+	if(memcmp(&ptr[uuidoffset], taguuid, sizeof(taguuid)) != 0)
+ 	  	return;
+	
+	tagNum = tag_count;
+
+	   	// If result count not at max
+   	if ( tagNum < DEFAULT_MAX_SCAN_RES )
+   	{
+		// Check if device is already in scan results
+		for ( i = 0; i < tagNum; i++ )
+		{
+			if (memcmp(pAddr, (void *)&tag_mac_list[i], B_ADDR_LEN) == 0)
+			{
+				return;
+			}
+		}
+		
+		// Add addr to scan result list
+		memcpy(&tag_mac_list[tagNum], pAddr, B_ADDR_LEN );
+
+		majoroffset = TAG_ADV_MAJOR_OFFSET; 
+		
+		memcpy((void *)(&tag_inf_list[tagNum].major[0]), (void *)&ptr[majoroffset], 
+			    sizeof(uint32) + sizeof(uint8));
+		
+		tag_inf_list[tagNum].rssi = rssi;
+ 		
+		// Increment scan result count
+		tag_count ++;
+	}
 }
 
 /*********************************************************************
