@@ -57,7 +57,7 @@ extern "C"
 /*-------------------------------------------------------------------
  * INCLUDES
  */
-
+#include "gap.h"
 /*-------------------------------------------------------------------
  * CONSTANTS
  */
@@ -76,6 +76,7 @@ extern "C"
 #define GAPROLE_ADV_DIRECT_ADDR     0x308  //!< Direct Advertisement Address. Read/Write. Size is uint8_t[B_ADDR_LEN]. Default is NULL.
 #define GAPROLE_ADV_CHANNEL_MAP     0x309  //!< Which channels to advertise on. Read/Write Size is uint8_t. Default is GAP_ADVCHAN_ALL (defined in GAP.h)
 #define GAPROLE_ADV_FILTER_POLICY   0x30A  //!< Filter Policy. Ignored when directed advertising is used. Read/Write. Size is uint8_t. Default is GAP_FILTER_POLICY_ALL (defined in GAP.h).
+#define GAPROLE_MAX_SCAN_RES        0x404
 /** @} End GAPROLE_PROFILE_PARAMETERS */
 
 /*-------------------------------------------------------------------
@@ -94,6 +95,14 @@ typedef enum
   GAPROLE_ERROR                           //!< Error occurred - invalid state
 } gaprole_States_t;
 
+typedef union
+{
+  gapEventHdr_t             gap;          //!< @ref GAP_MSG_EVENT and status.
+  gapDeviceInitDoneEvent_t  initDone;     //!< GAP initialization done.
+  gapDeviceInfoEvent_t      deviceInfo;   //!< Discovery device information event structure.
+  gapDevDiscEvent_t         discCmpl;     //!< Discovery complete event structure.
+} gapPeriObsRoleEvent_t;
+
 /*-------------------------------------------------------------------
  * MACROS
  */
@@ -108,6 +117,16 @@ typedef enum
  */
 typedef void (*gapRolesStateNotify_t)(gaprole_States_t newState);
 
+   /**
+ * @brief SPO Event Callback Function
+ *
+ * @param pEvent Pointer to event structure
+ */
+typedef uint8_t (*passThroughToApp_t)
+(
+  gapPeriObsRoleEvent_t *pEvent
+);
+
 /**
  * Callback structure - must be setup by the application and used when
  *                      GAPRole_StartDevice() is called.
@@ -115,6 +134,7 @@ typedef void (*gapRolesStateNotify_t)(gaprole_States_t newState);
 typedef struct
 {
   gapRolesStateNotify_t    pfnStateChange;  //!< Whenever the device changes state
+  passThroughToApp_t       pfnPassThrough;  //!< When the app should decide on a param update request
 } gapRolesCBs_t;
 
 /*-------------------------------------------------------------------
@@ -176,6 +196,28 @@ extern bStatus_t GAPRole_StartDevice(gapRolesCBs_t *pAppCallbacks);
  * @} End GAPROLES_BROADCASTER_API
  */
 
+/**
+ * @brief   Start a device discovery scan.
+ *
+ * @param   mode discovery mode: @ref GAP_Discovery
+ * @param   activeScan TRUE to perform active scan
+ * @param   whiteList TRUE to only scan for devices in the white list
+ *
+ * @return  @ref SUCCESS : Discovery discovery has started.
+ * @return  @ref bleIncorrectMode : Invalid profile role.
+ * @return  @ref bleAlreadyInRequestedMode : Device discovery already started
+ * @return  @ref HCI_ERROR_CODE_INVALID_HCI_CMD_PARAMS : bad parameter
+ */
+extern bStatus_t GAPRole_StartDiscovery(uint8_t mode, uint8_t activeScan, uint8_t whiteList);
+
+/**
+ * @brief   Cancel a device discovery scan.
+ *
+ * @return  @ref SUCCESS : Cancel started.
+ * @return  @ref bleInvalidTaskID : Not the task that started discovery.
+ * @return  @ref bleIncorrectMode : Not in discovery mode.
+ */
+extern bStatus_t GAPRole_CancelDiscovery(void);
 
 /*-------------------------------------------------------------------
  * TASK FUNCTIONS - Don't call these. These are system functions.

@@ -48,7 +48,7 @@
 /*********************************************************************
  * INCLUDES
  */
-
+#include <string.h>
 #include <ti/sysbios/knl/Task.h>
 #include <ti/sysbios/knl/Clock.h>
 #include <ti/sysbios/knl/Semaphore.h>
@@ -81,6 +81,21 @@
 // What is the advertising interval when device is discoverable (units of 625us, 160=100ms)
 #define DEFAULT_ADVERTISING_INTERVAL          160
 
+   // Maximum number of scan responses
+#define DEFAULT_MAX_SCAN_RES                  20
+
+// Scan parameters
+#define DEFAULT_SCAN_DURATION_600ms           600
+
+// Discovey mode (limited, general, all)
+#define DEFAULT_DISCOVERY_MODE                DEVDISC_MODE_ALL
+
+// TRUE to use active scan
+#define DEFAULT_DISCOVERY_ACTIVE_SCAN         FALSE
+
+// TRUE to use white list during discovery
+#define DEFAULT_DISCOVERY_WHITE_LIST          FALSE
+   
 // Task configuration
 #define SBB_TASK_PRIORITY                     1
 
@@ -91,7 +106,11 @@
 // Internal Events for RTOS application
 #define SBB_STATE_CHANGE_EVT                  0x0001
 #define SBB_KEY_CHANGE_EVT                    0x0002
+#define SBP_OBSERVER_STATE_EVT                0x0004
+#define SBP_PERIODIC_EVT                      0x0008
 
+// How often to perform periodic event (in msec)
+#define SBP_PERIODIC_EVT_PERIOD               2000
 /*********************************************************************
  * TYPEDEFS
  */
@@ -100,14 +119,12 @@
 typedef struct
 {
   appEvtHdr_t hdr; // Event header.
+  uint8_t *pData;  // event data
 } sbbEvt_t;
 
 /*********************************************************************
  * GLOBAL VARIABLES
  */
-
-// Display Interface
-Display_Handle dispHandle = NULL;
 
 /*********************************************************************
  * EXTERNAL VARIABLES
@@ -134,6 +151,12 @@ static Queue_Handle appMsgQueue;
 // Task configuration
 Task_Struct sbbTask;
 Char sbbTaskStack[SBB_TASK_STACK_SIZE];
+
+// Clock instances for internal periodic events.
+static Clock_Struct periodicClock;
+
+// events flag for internal application events.
+static uint16_t events;
 
 // GAP - SCAN RSP data (max size = 31 bytes)
 static uint8 scanRspData[] =
@@ -239,9 +262,14 @@ static void SimpleBLEBroadcaster_taskFxn(UArg a0, UArg a1);
 static void SimpleBLEBroadcaster_processStackMsg(ICall_Hdr *pMsg);
 static void SimpleBLEBroadcaster_processAppMsg(sbbEvt_t *pMsg);
 static void SimpleBLEBroadcaster_processStateChangeEvt(gaprole_States_t newState);
+static void SimpleBLEPeripheral_clockHandler(UArg arg);
 
 static void SimpleBLEBroadcaster_stateChangeCB(gaprole_States_t newState);
 
+static void SimpleBLEBroadcasterObserver_processRoleEvent(gapPeriObsRoleEvent_t *pEvent);
+static uint8_t SimpleBLEBroadcasterObserver_StateChangeCB(gapPeriObsRoleEvent_t *pEvent);
+static void SimpleBLEObserver_addDeviceInfo_Ex(uint8 *pAddr, uint8 *pData, uint8 datalen, uint8 rssi);
+static uint8_t SimpleBLEBroadcaster_enqueueMsg(uint8_t event, uint8_t state, uint8_t *pData);
 /*********************************************************************
  * PROFILE CALLBACKS
  */
@@ -250,6 +278,8 @@ static void SimpleBLEBroadcaster_stateChangeCB(gaprole_States_t newState);
 static gapRolesCBs_t simpleBLEBroadcaster_BroadcasterCBs =
 {
   SimpleBLEBroadcaster_stateChangeCB   // Profile State Change Callbacks
+  ,
+  SimpleBLEBroadcasterObserver_StateChangeCB
 };
 
 /*********************************************************************
@@ -318,7 +348,21 @@ static void SimpleBLEBroadcaster_init(void)
 #else
     uint8_t advType = GAP_ADTYPE_ADV_NONCONN_IND; // use non-connectable adv
 #endif // !BEACON_FEATURE
+	
+    // Create one-shot clocks for internal periodic events.
+    Util_constructClock(&periodicClock, SimpleBLEPeripheral_clockHandler,
+                      SBP_PERIODIC_EVT_PERIOD, 0, false, SBP_PERIODIC_EVT);
 
+    {
+      // Set the max amount of scan responses
+      uint8_t scanRes = DEFAULT_MAX_SCAN_RES;
+      GAPRole_SetParameter(GAPROLE_MAX_SCAN_RES, sizeof(uint8_t),
+                         &scanRes);	
+	
+      GAP_SetParamValue(TGAP_GEN_DISC_SCAN, DEFAULT_SCAN_DURATION_600ms);
+      GAP_SetParamValue(TGAP_LIM_DISC_SCAN, DEFAULT_SCAN_DURATION_600ms);
+    }
+	
     // Set the GAP Role Parameters
     GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t),
                          &initial_advertising_enable);
@@ -344,6 +388,8 @@ static void SimpleBLEBroadcaster_init(void)
 
   // Start the Device
   VOID GAPRole_StartDevice(&simpleBLEBroadcaster_BroadcasterCBs);
+  
+  Util_startClock(&periodicClock);
 }
 
 /*********************************************************************
@@ -406,6 +452,17 @@ static void SimpleBLEBroadcaster_taskFxn(UArg a0, UArg a1)
           ICall_free(pMsg);
         }
       }
+	  
+      if (events & SBP_PERIODIC_EVT)
+      {
+         events &= ~SBP_PERIODIC_EVT;
+	  
+         GAPRole_StartDiscovery( DEFAULT_DISCOVERY_MODE,
+                              DEFAULT_DISCOVERY_ACTIVE_SCAN,
+                              DEFAULT_DISCOVERY_WHITE_LIST );	
+	  
+         Util_startClock(&periodicClock);
+      }
     }
   }
 }
@@ -423,6 +480,10 @@ static void SimpleBLEBroadcaster_processStackMsg(ICall_Hdr *pMsg)
 {
   switch (pMsg->event)
   {
+    case GAP_MSG_EVENT:
+	  SimpleBLEBroadcasterObserver_processRoleEvent((gapPeriObsRoleEvent_t *)pMsg);
+	  break;
+	  
     default:
       // do nothing
       break;
@@ -446,11 +507,120 @@ static void SimpleBLEBroadcaster_processAppMsg(sbbEvt_t *pMsg)
       SimpleBLEBroadcaster_processStateChangeEvt((gaprole_States_t)pMsg->
                                                  hdr.state);
       break;
-
+	  
+    case SBP_OBSERVER_STATE_EVT:
+      SimpleBLEBroadcaster_processStackMsg((ICall_Hdr *)pMsg->pData);
+      break;
+	 
     default:
       // Do nothing.
       break;
   }
+}
+
+/*********************************************************************
+ * @fn      SimpleBLEBroadcasterObserver_StateChangeCB
+ *
+ * @brief   Peripheral observer event callback function.
+ *
+ * @param   pEvent - pointer to event structure
+ */
+static uint8_t SimpleBLEBroadcasterObserver_StateChangeCB(gapPeriObsRoleEvent_t *pEvent)
+{
+  // Forward the role event to the application
+  if(pEvent->gap.opcode == GAP_DEVICE_INIT_DONE_EVENT)
+  {
+  	gapDeviceInitDoneEvent_t *pDevInfoMsg;
+	
+	if( pDevInfoMsg = ICall_malloc(sizeof(gapDeviceInitDoneEvent_t)))
+	{
+	  memcpy(pDevInfoMsg, pEvent, sizeof(gapDeviceInitDoneEvent_t));
+	  
+	  SimpleBLEBroadcaster_enqueueMsg( SBP_OBSERVER_STATE_EVT, SUCCESS, 
+                                       (uint8_t *)pDevInfoMsg);
+	}
+	
+	ICall_freeMsg(pEvent);
+	
+	return TRUE;
+  }
+  else if( (pEvent->gap.opcode == GAP_DEVICE_INFO_EVENT) |
+		    (pEvent->gap.opcode == GAP_DEVICE_DISCOVERY_EVENT) )
+  {
+	SimpleBLEBroadcaster_enqueueMsg(SBP_OBSERVER_STATE_EVT, SUCCESS, 
+                                    (uint8_t *)pEvent);
+	
+    // Caller should free the event
+    return TRUE;
+  }
+  else
+  {   
+    // App will process and free the event
+    ICall_freeMsg(pEvent);
+ 
+    return FALSE;  
+  }
+}
+
+/*********************************************************************
+ * @fn      SimpleBLEBroadcasterObserver_processRoleEvent
+ *
+ * @brief   Peripheral Observer role event processing function.
+ *
+ * @param   pEvent - pointer to event structure
+ *
+ * @return  none
+ */
+static void SimpleBLEBroadcasterObserver_processRoleEvent(gapPeriObsRoleEvent_t *pEvent)
+{
+  switch (pEvent->gap.opcode)
+  {
+	case GAP_DEVICE_INIT_DONE_EVENT:
+	  {
+		GAPRole_StartDiscovery( DEFAULT_DISCOVERY_MODE,
+                                DEFAULT_DISCOVERY_ACTIVE_SCAN,
+                                DEFAULT_DISCOVERY_WHITE_LIST );
+	  }	  
+	  
+	  ICall_free(pEvent);
+	  break;
+	  
+    case GAP_DEVICE_INFO_EVENT:
+	  {
+		if(pEvent->deviceInfo.eventType != GAP_ADRPT_SCAN_RSP)
+		{
+			SimpleBLEObserver_addDeviceInfo_Ex(pEvent->deviceInfo.addr,
+                                               pEvent->deviceInfo.pEvtData,
+                                               pEvent->deviceInfo.dataLen,
+                                               pEvent->deviceInfo.rssi);
+		}
+	  }
+	  
+      ICall_freeMsg(pEvent);
+      break;
+	  
+    case GAP_DEVICE_DISCOVERY_EVENT:
+      // discovery complete
+      GAPRole_CancelDiscovery();
+	  
+      ICall_freeMsg(pEvent);
+      break;
+
+    default:
+      break;
+  }
+}
+
+/*********************************************************************
+ * @fn      SimpleBLEObserver_addDeviceInfo_Ex
+ *
+ * @brief   Add a device to the device discovery result list
+ *
+ * @return  none
+ */
+static void SimpleBLEObserver_addDeviceInfo_Ex(uint8 *pAddr, uint8 *pData, uint8 datalen, uint8 rssi)
+{
+;
 }
 
 /*********************************************************************
@@ -464,17 +634,35 @@ static void SimpleBLEBroadcaster_processAppMsg(sbbEvt_t *pMsg)
  */
 static void SimpleBLEBroadcaster_stateChangeCB(gaprole_States_t newState)
 {
+  SimpleBLEBroadcaster_enqueueMsg(SBB_STATE_CHANGE_EVT, newState, NULL);
+}
+
+/*********************************************************************
+ * @fn      SimpleBLEBroadcaster_enqueueMsg
+ *
+ * @brief   Creates a message and puts the message in RTOS queue.
+ *
+ * @param   event - message event.
+ * @param   state - message state.
+ *
+ * @return  None.
+ */
+static uint8_t SimpleBLEBroadcaster_enqueueMsg(uint8_t event, uint8_t state, uint8_t *pData)
+{
   sbbEvt_t *pMsg;
 
   // Create dynamic pointer to message.
   if ((pMsg = ICall_malloc(sizeof(sbbEvt_t))))
   {
-    pMsg->hdr.event = SBB_STATE_CHANGE_EVT;
-    pMsg->hdr.state = newState;
-
+    pMsg->hdr.event = event;
+    pMsg->hdr.state = state;
+    pMsg->pData = pData;
+	
     // Enqueue the message.
-    Util_enqueueMsg(appMsgQueue, sem, (uint8*)pMsg);
+    return Util_enqueueMsg(appMsgQueue, sem, (uint8*)pMsg);
   }
+  
+  return FALSE;  
 }
 
 /*********************************************************************
@@ -524,5 +712,22 @@ static void SimpleBLEBroadcaster_processStateChangeEvt(gaprole_States_t newState
   }
 }
 
+/*********************************************************************
+ * @fn      SimpleBLEPeripheral_clockHandler
+ *
+ * @brief   Handler function for clock timeouts.
+ *
+ * @param   arg - event type
+ *
+ * @return  None.
+ */
+static void SimpleBLEPeripheral_clockHandler(UArg arg)
+{
+  // Store the event.
+  events |= arg;
+
+  // Wake up the application.
+  Semaphore_post(sem);
+}
 /*********************************************************************
 *********************************************************************/

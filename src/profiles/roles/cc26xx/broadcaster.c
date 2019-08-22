@@ -89,7 +89,7 @@
 #define GAPROLE_TASK_PRIORITY         3
 
 #ifndef GAPROLE_TASK_STACK_SIZE
-#define GAPROLE_TASK_STACK_SIZE       400
+#define GAPROLE_TASK_STACK_SIZE       500
 #endif
 
 /*********************************************************************
@@ -159,6 +159,7 @@ static uint8_t  gapRole_AdvFilterPolicy;
 // Application callbacks
 static gapRolesCBs_t *pGapRoles_AppCGs = NULL;
 
+static uint8_t  gapRoleMaxScanRes = 8;
 /*********************************************************************
  * Profile Attributes - variables
  */
@@ -187,6 +188,34 @@ void gapRole_clockHandler(UArg a0);
 /*********************************************************************
  * PUBLIC FUNCTIONS
  */
+
+/**
+ * @brief   Start a device discovery scan.
+ *
+ * Public function defined in peripheral_observer.h.
+ */
+bStatus_t GAPRole_StartDiscovery(uint8_t mode, uint8_t activeScan, uint8_t whiteList)
+{
+  gapDevDiscReq_t params;
+
+  params.taskID = ICall_getLocalMsgEntityId(ICALL_SERVICE_CLASS_BLE_MSG, 
+                                            selfEntity);
+  params.mode = mode;
+  params.activeScan = activeScan;
+  params.whiteList = whiteList;
+
+  return GAP_DeviceDiscoveryRequest(&params);
+}
+
+/**
+ * @brief   Cancel a device discovery scan.
+ *
+ * Public function defined in peripheral_observer.h.
+ */
+bStatus_t GAPRole_CancelDiscovery(void)
+{
+  return GAP_DeviceDiscoveryCancel(selfEntity);
+}
 
 /*********************************************************************
  * @brief   Set a GAP Role parameter.
@@ -331,6 +360,16 @@ bStatus_t GAPRole_SetParameter(uint16_t param, uint8_t len, void *pValue)
         ret = bleInvalidRange;
       }
       break;
+    case GAPROLE_MAX_SCAN_RES:
+      if (len == sizeof (uint8_t))
+      {
+        gapRoleMaxScanRes = *((uint8_t*)pValue);
+      }
+      else
+      {
+        ret = bleInvalidRange;
+      }
+      break;	
 
     default:
       // The param value isn't part of this profile, try the GAP.
@@ -492,7 +531,7 @@ static void gapRole_init(void)
                       0, 0, false, START_ADVERTISING_EVT);
 
   // Initialize the Profile Advertising and Connection Parameters
-  gapRole_profileRole = GAP_PROFILE_BROADCASTER;
+  gapRole_profileRole = GAP_PROFILE_BROADCASTER | GAP_PROFILE_OBSERVER;
 
   gapRole_AdvEventType = GAP_ADTYPE_ADV_NONCONN_IND;
   gapRole_AdvDirectType = ADDRMODE_PUBLIC;
@@ -610,7 +649,8 @@ static void gapRole_processStackMsg(ICall_Hdr *pMsg)
 static void gapRole_processGAPMsg(gapEventHdr_t *pMsg)
 {
   uint8_t notify = FALSE;   // State changed notify the app? (default no)
-
+  uint8_t notifyObserver = FALSE;   // Observer state changed, notify the app (default no)
+  
   switch (pMsg->opcode)
   {
     case GAP_DEVICE_INIT_DONE_EVENT:
@@ -635,7 +675,7 @@ static void gapRole_processGAPMsg(gapEventHdr_t *pMsg)
         {
           gapRole_state = GAPROLE_ERROR;
         }
-
+        notifyObserver = TRUE;
         notify = TRUE;
       }
       break;
@@ -710,11 +750,34 @@ static void gapRole_processGAPMsg(gapEventHdr_t *pMsg)
         notify = TRUE;
       }
       break;
+	  
+  	case  GAP_DEVICE_INFO_EVENT:
+	 {
+        // Send callback to application
+        notifyObserver = TRUE;		
+	 }
+	 break;
+	
+    case GAP_DEVICE_DISCOVERY_EVENT:
+	 {
+        // Send callback to application
+        notifyObserver = TRUE;
+	 }
+	 break;	  
 
     default:
       break;
   }
 
+  if(notifyObserver == TRUE)
+  {
+    // Notify the application with the event
+    if (pGapRoles_AppCGs && pGapRoles_AppCGs->pfnPassThrough)
+    {
+      pGapRoles_AppCGs->pfnPassThrough((gapPeriObsRoleEvent_t *)pMsg);
+    }  
+  }
+  
   if (notify == TRUE)
   {
     // Notify the application
@@ -737,7 +800,7 @@ static void gapRole_processGAPMsg(gapEventHdr_t *pMsg)
  */
 static void gapRole_SetupGAP(void)
 {
-  VOID GAP_DeviceInit(selfEntity, gapRole_profileRole, 0, NULL, NULL, NULL);
+  VOID GAP_DeviceInit(selfEntity, gapRole_profileRole, gapRoleMaxScanRes, NULL, NULL, NULL);
 }
 
 /*********************************************************************
