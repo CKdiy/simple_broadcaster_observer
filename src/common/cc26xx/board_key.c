@@ -111,8 +111,28 @@ PIN_Config keyPinsCfg[] =
     PIN_TERMINATE
 };
 
+PIN_Config statusPinsCfg[] =
+{
+    Board_DK_STATUS1    | PIN_GPIO_OUTPUT_DIS  | PIN_INPUT_EN  |  PIN_PULLUP,
+	Board_DK_STATUS2    | PIN_GPIO_OUTPUT_DIS  | PIN_INPUT_EN  |  PIN_PULLUP,
+    PIN_TERMINATE  
+};
+
+PIN_Config ledPinsCfg[] =
+{
+    Board_DK_LED1      | PIN_GPIO_OUTPUT_EN   | PIN_INPUT_DIS |  PIN_GPIO_LOW  |  PIN_PULLUP,
+	Board_DK_LED2      | PIN_GPIO_OUTPUT_EN   | PIN_INPUT_DIS |  PIN_GPIO_LOW  |  PIN_PULLUP,
+    PIN_TERMINATE 
+};
+
 PIN_State  keyPins;
 PIN_Handle hKeyPins;
+
+PIN_State  statusPins;
+PIN_Handle hstatusPins;
+
+PIN_State  ledPins;
+PIN_Handle hledPins;
 
 /*********************************************************************
  * PUBLIC FUNCTIONS
@@ -236,5 +256,38 @@ static void Board_keyChangeHandler(UArg a0)
     (*appKeyChangeHandler)(keysPressed);
   }
 }
+
+void Board_initStatusPins(void)
+{
+    hstatusPins = PIN_open( &statusPins, statusPinsCfg );
+}
+
+void Board_initLedPins(void)
+{
+    hledPins = PIN_open( &ledPins, ledPinsCfg );
+}
+
+void Board_Led1Ctrl(uint8_t status)
+{
+	if(Board_LED_ON == status)
+		PIN_setOutputValue(hledPins, Board_DK_LED1, 1);
+	else
+	  	PIN_setOutputValue(hledPins, Board_DK_LED1, 0);
+}
+
+void Board_Led2Ctrl(uint8_t status)
+{
+	if(Board_LED_ON == status)
+		PIN_setOutputValue(hledPins, Board_DK_LED2, 1);
+	else
+	  	PIN_setOutputValue(hledPins, Board_DK_LED2, 0);
+}
+
+void Board_getStatusPin( uint8_t *st1, uint8_t *st2)
+{
+	*st1 = PIN_getInputValue( Board_DK_STATUS1 );
+	*st2 = PIN_getInputValue( Board_DK_STATUS2 );
+}
+
 /*********************************************************************
 *********************************************************************/

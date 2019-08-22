@@ -76,12 +76,12 @@ extern const PIN_Config BoardGpioInitTable[];
 /* Leds */
 #define Board_LED_ON                        1 /* LEDs on CC2650 are active high */
 #define Board_LED_OFF                       0
-#define Board_DK_LED1                       PIN_UNASSIGNED
-#define Board_DK_LED2                       PIN_UNASSIGNED
+#define Board_DK_LED1                       IOID_6
+#define Board_DK_LED2                       IOID_7
 #define Board_DK_ADC                        IOID_5          /* P1.2  */
-#define Board_DK_LED4                       IOID_6          /* P1.4  */
+#define Board_DK_LED4                       PIN_UNASSIGNED  /* P1.4  */
 /* Button Board */
-#define Board_KEY_SELECT                    IOID_7          /* P1.14 */
+#define Board_KEY_SELECT                    PIN_UNASSIGNED  /* P1.14 */
 #define Board_KEY_UP                        IOID_4          /* P1.10 */
 #define Board_KEY_DOWN                      IOID_3          /* P1.12 */
 #define Board_KEY_LEFT                      PIN_UNASSIGNED
@@ -98,8 +98,8 @@ extern const PIN_Config BoardGpioInitTable[];
 #define Board_UART_RTS                      PIN_UNASSIGNED
 /* SPI Board */
 #define Board_SPI0_MISO                     IOID_0          /* P1.20 */
-#define Board_SPI0_MOSI                     IOID_9          /* P1.18 */
-#define Board_SPI0_CLK                      IOID_8          /* P1.16 */
+#define Board_SPI0_MOSI                     PIN_UNASSIGNED  /* P1.18 */
+#define Board_SPI0_CLK                      PIN_UNASSIGNED  /* P1.16 */
 #define Board_SPI0_CSN                      PIN_UNASSIGNED
 /* PWM outputs */
 #define Board_PWMPIN0                       Board_DK_ADC
@@ -110,6 +110,9 @@ extern const PIN_Config BoardGpioInitTable[];
 #define Board_PWMPIN5                       PIN_UNASSIGNED
 #define Board_PWMPIN6                       PIN_UNASSIGNED
 #define Board_PWMPIN7                       PIN_UNASSIGNED
+/* PWM outputs */
+#define Board_DK_STATUS1                    IOID_8
+#define Board_DK_STATUS2                    IOID_9
 
 /** ============================================================================
  *  Instance identifiers
