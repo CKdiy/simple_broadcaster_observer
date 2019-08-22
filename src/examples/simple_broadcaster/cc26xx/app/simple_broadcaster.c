@@ -69,6 +69,7 @@
 #include "board.h"
 
 #include "simple_broadcaster.h"
+#include "board_key.h"
 
 #include "taginf.h"
 /*********************************************************************
@@ -163,7 +164,10 @@ tag_mac_struct tag_mac_list[DEFAULT_MAX_SCAN_RES];
 tag_inf_struct tag_inf_list[DEFAULT_MAX_SCAN_RES];
 
 static uint8 tag_count;    //Number of single discoveries
-static uint8 tag_index; 
+static uint8 tag_index;
+
+static uint8 iostatus1;    
+static uint8 iostatus2;
 
 // GAP - SCAN RSP data (max size = 31 bytes)
 static uint8 scanRspData[] =
@@ -339,6 +343,8 @@ static void SimpleBLEBroadcaster_init(void)
     uint8_t advType = GAP_ADTYPE_ADV_NONCONN_IND; // use non-connectable adv
 #endif // !BEACON_FEATURE
 	
+    Board_initStatusPins();
+	
     // Create one-shot clocks for internal periodic events.
     Util_constructClock(&periodicClock, SimpleBLEPeripheral_clockHandler,
                       SBP_PERIODIC_EVT_PERIOD, 0, false, SBP_PERIODIC_EVT);
@@ -451,6 +457,10 @@ static void SimpleBLEBroadcaster_taskFxn(UArg a0, UArg a1)
          memset((void *)tag_inf_list, 0, tag_count*sizeof(tag_inf_struct));
          tag_count = 0;
          tag_index = 0;
+		 
+         Board_getStatusPin( &iostatus1, &iostatus2 );
+         advertData[16] = iostatus1;
+         advertData[17] = iostatus2;
 		 
          GAPRole_StartDiscovery( DEFAULT_DISCOVERY_MODE,
                               DEFAULT_DISCOVERY_ACTIVE_SCAN,
