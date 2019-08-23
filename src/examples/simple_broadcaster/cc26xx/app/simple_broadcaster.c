@@ -110,9 +110,13 @@
 #define SBB_KEY_CHANGE_EVT                    0x0002
 #define SBP_OBSERVER_STATE_EVT                0x0004
 #define SBP_PERIODIC_EVT                      0x0008
+#define SBP_ADVUPDATE_EVT                     0x0010
 
 // How often to perform periodic event (in msec)
-#define SBP_PERIODIC_EVT_PERIOD               2000
+#define SBP_PERIODIC_EVT_PERIOD               3000
+#define SBP_PERIODIC_EVT_UPDATEADV            200
+
+#define DEFAULT_ADVUPDATE_CYCLE_NUM           1
 /*********************************************************************
  * TYPEDEFS
  */
@@ -156,6 +160,7 @@ Char sbbTaskStack[SBB_TASK_STACK_SIZE];
 
 // Clock instances for internal periodic events.
 static Clock_Struct periodicClock;
+static Clock_Struct updateadvClock;
 
 // events flag for internal application events.
 static uint16_t events;
@@ -163,8 +168,9 @@ static uint16_t events;
 tag_mac_struct tag_mac_list[DEFAULT_MAX_SCAN_RES];
 tag_inf_struct tag_inf_list[DEFAULT_MAX_SCAN_RES];
 
-static uint8 tag_count;    //Number of single discoveries
-static uint8 tag_index;
+static uint8  tag_count;    //Number of single discoveries
+static uint8  tag_index;
+static uint8 advupdate_interval; 
 
 static uint8 iostatus1;    
 static uint8 iostatus2;
@@ -262,8 +268,10 @@ static void SimpleBLEBroadcaster_stateChangeCB(gaprole_States_t newState);
 
 static void SimpleBLEBroadcasterObserver_processRoleEvent(gapPeriObsRoleEvent_t *pEvent);
 static uint8_t SimpleBLEBroadcasterObserver_StateChangeCB(gapPeriObsRoleEvent_t *pEvent);
-static void SimpleBLEObserver_addDeviceInfo_Ex(uint8 *pAddr, uint8 *pData, uint8 datalen, int8 rssi);
+static void SimpleBLEObserver_addDeviceInfo_Ex(uint8 *pAddr, uint8 *pData, uint8 datalen,
+                                               int8 rssi);
 static uint8_t SimpleBLEBroadcaster_enqueueMsg(uint8_t event, uint8_t state, uint8_t *pData);
+static void SimpleBLEBroadcaster_AdvstatusCtrl( uint8_t status);
 /*********************************************************************
  * PROFILE CALLBACKS
  */
@@ -330,7 +338,7 @@ static void SimpleBLEBroadcaster_init(void)
   // Setup the GAP Broadcaster Role Profile
   {
     // For all hardware platforms, device starts advertising upon initialization
-    uint8_t initial_advertising_enable = TRUE;
+    uint8_t initial_advertising_enable = FALSE;
 
     // By setting this to zero, the device will go into the waiting state after
     // being discoverable for 30.72 second, and will not being advertising again
@@ -349,6 +357,9 @@ static void SimpleBLEBroadcaster_init(void)
     // Create one-shot clocks for internal periodic events.
     Util_constructClock(&periodicClock, SimpleBLEPeripheral_clockHandler,
                       SBP_PERIODIC_EVT_PERIOD, 0, false, SBP_PERIODIC_EVT);
+	
+    Util_constructClock(&updateadvClock, SimpleBLEPeripheral_clockHandler,
+                      SBP_PERIODIC_EVT_UPDATEADV, 0, false, SBP_ADVUPDATE_EVT);
 
     {
       // Set the max amount of scan responses
@@ -454,22 +465,60 @@ static void SimpleBLEBroadcaster_taskFxn(UArg a0, UArg a1)
       {
          events &= ~SBP_PERIODIC_EVT;
 		 
+         if( Util_isActive(&updateadvClock) )
+             Util_stopClock(&updateadvClock);
+		 		 
          memset((void *)tag_mac_list, 0, tag_count*B_ADDR_LEN);
          memset((void *)tag_inf_list, 0, tag_count*sizeof(tag_inf_struct));
          tag_count = 0;
          tag_index = 0;
+         advupdate_interval = 0;
 		 
          Board_getStatusPin( &iostatus1, &iostatus2 );
          advertData[16] = iostatus1;
          advertData[17] = iostatus2;
 		 
          Board_Led1Ctrl( Board_LED_ON );
+		 
          GAPRole_StartDiscovery( DEFAULT_DISCOVERY_MODE,
                               DEFAULT_DISCOVERY_ACTIVE_SCAN,
                               DEFAULT_DISCOVERY_WHITE_LIST );			 
 	  
          Util_startClock(&periodicClock);
       }
+      else if( events & SBP_ADVUPDATE_EVT)
+      {
+          events &= ~SBP_ADVUPDATE_EVT;	
+		  
+          if( (tag_count > 0) && (advupdate_interval < DEFAULT_ADVUPDATE_CYCLE_NUM) )
+          {
+              advertData[7] = tag_inf_list[tag_index].rssi;
+			  
+              memcpy((void *)&advertData[25], (void *)&tag_inf_list[tag_index].major[0],
+                      sizeof(tag_inf_struct) - sizeof(uint8_t));
+			  
+              GAPRole_SetParameter(GAPROLE_ADVERT_DATA, sizeof(advertData), advertData);
+			  
+              if( (tag_index == 0) && (advupdate_interval == 0))
+              {
+                  SimpleBLEBroadcaster_AdvstatusCtrl( TRUE );			  
+              }
+
+              tag_index ++;
+				  
+              if( (tag_index == tag_count) )
+              {
+                  tag_index = 0;	
+                  advupdate_interval ++;
+              }
+			  
+              Util_restartClock(&updateadvClock, SBP_PERIODIC_EVT_UPDATEADV);
+          }		  			  
+          else if( advupdate_interval >= DEFAULT_ADVUPDATE_CYCLE_NUM )
+          {
+              SimpleBLEBroadcaster_AdvstatusCtrl( FALSE );			  
+          }		  		  
+	  }
     }
   }
 }
@@ -612,7 +661,10 @@ static void SimpleBLEBroadcasterObserver_processRoleEvent(gapPeriObsRoleEvent_t 
     case GAP_DEVICE_DISCOVERY_EVENT:
       // discovery complete
       GAPRole_CancelDiscovery();
+	  
       Board_Led1Ctrl( Board_LED_OFF );
+	  
+      Util_restartClock(&updateadvClock, 20);
 	  
       ICall_freeMsg(pEvent);
       break;
@@ -767,6 +819,29 @@ static void SimpleBLEBroadcaster_processStateChangeEvt(gaprole_States_t newState
       }
       break;
   }
+}
+
+/*********************************************************************
+ * @fn      SimpleBLEBroadcaster_AdvstatusCtrl
+ *
+ * @brief   Turn on or Turn off broadcast
+ *
+ * @param   advstatus -  ADV Status
+ *
+ * @return  None.
+ */
+static void SimpleBLEBroadcaster_AdvstatusCtrl( uint8_t status)
+{
+    uint8_t advStatus;
+	
+	GAPRole_GetParameter( GAPROLE_ADVERT_ENABLED, &advStatus );	
+    
+	if( status != advStatus )
+	{
+        advStatus = status;	   
+		GAPRole_SetParameter( GAPROLE_ADVERT_ENABLED, sizeof(uint8_t),
+							   &advStatus);	
+	}
 }
 
 /*********************************************************************
