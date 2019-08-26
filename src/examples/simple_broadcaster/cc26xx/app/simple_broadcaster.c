@@ -72,6 +72,10 @@
 #include "board_key.h"
 
 #include "taginf.h"
+
+#ifdef IWDG_ENABLE
+#include <ti/drivers/Watchdog.h>
+#endif
 /*********************************************************************
  * MACROS
  */
@@ -112,9 +116,14 @@
 #define SBP_PERIODIC_EVT                      0x0008
 #define SBP_ADVUPDATE_EVT                     0x0010
 
+#ifdef IWDG_ENABLE 
+#define SBP_CLEAR_WDTPERIODIC_EVT             0x0020
+#endif
+
 // How often to perform periodic event (in msec)
 #define SBP_PERIODIC_EVT_PERIOD               3000
 #define SBP_PERIODIC_EVT_UPDATEADV            200
+#define SBP_PERIODIC_EVT_CLEARWDT             2000
 
 #define DEFAULT_ADVUPDATE_CYCLE_NUM           1
 /*********************************************************************
@@ -161,6 +170,12 @@ Char sbbTaskStack[SBB_TASK_STACK_SIZE];
 // Clock instances for internal periodic events.
 static Clock_Struct periodicClock;
 static Clock_Struct updateadvClock;
+
+#ifdef IWDG_ENABLE 
+static Clock_Struct clearWDTClock;
+//Watchdog_Params params;
+Watchdog_Handle watchdog;	
+#endif
 
 // events flag for internal application events.
 static uint16_t events;
@@ -272,6 +287,10 @@ static void SimpleBLEObserver_addDeviceInfo_Ex(uint8 *pAddr, uint8 *pData, uint8
                                                int8 rssi);
 static uint8_t SimpleBLEBroadcaster_enqueueMsg(uint8_t event, uint8_t state, uint8_t *pData);
 static void SimpleBLEBroadcaster_AdvstatusCtrl( uint8_t status);
+
+#ifdef IWDG_ENABLE
+void wdtInitFxn(void);
+#endif
 /*********************************************************************
  * PROFILE CALLBACKS
  */
@@ -351,6 +370,10 @@ static void SimpleBLEBroadcaster_init(void)
     uint8_t advType = GAP_ADTYPE_ADV_NONCONN_IND; // use non-connectable adv
 #endif // !BEACON_FEATURE
 	
+#ifdef IWDG_ENABLE
+  wdtInitFxn();
+#endif	
+  
     Board_initStatusPins();
     Board_initLedPins();
 	
@@ -360,8 +383,13 @@ static void SimpleBLEBroadcaster_init(void)
 	
     Util_constructClock(&updateadvClock, SimpleBLEPeripheral_clockHandler,
                       SBP_PERIODIC_EVT_UPDATEADV, 0, false, SBP_ADVUPDATE_EVT);
+	
+#ifdef IWDG_ENABLE	
+    Util_constructClock(&clearWDTClock, SimpleBLEPeripheral_clockHandler,
+                      SBP_PERIODIC_EVT_CLEARWDT, 0, false, SBP_CLEAR_WDTPERIODIC_EVT);
+#endif
 
-    {
+    { 
       // Set the max amount of scan responses
       uint8_t scanRes = DEFAULT_MAX_SCAN_RES;
       GAPRole_SetParameter(GAPROLE_MAX_SCAN_RES, sizeof(uint8_t),
@@ -519,6 +547,18 @@ static void SimpleBLEBroadcaster_taskFxn(UArg a0, UArg a1)
               SimpleBLEBroadcaster_AdvstatusCtrl( FALSE );			  
           }		  		  
 	  }
+	  
+#ifdef IWDG_ENABLE 	  
+	  else if( events & SBP_CLEAR_WDTPERIODIC_EVT )
+	  {
+          events &= ~SBP_CLEAR_WDTPERIODIC_EVT;
+		  
+          Watchdog_clear(watchdog);
+		  
+          Util_startClock(&clearWDTClock);
+	  }
+#endif
+	  
     }
   }
 }
@@ -861,5 +901,26 @@ static void SimpleBLEPeripheral_clockHandler(UArg arg)
   // Wake up the application.
   Semaphore_post(sem);
 }
+
+#ifdef IWDG_ENABLE 
+void wdtCallback(UArg handle) 
+{
+	Watchdog_clear((Watchdog_Handle)handle);
+}
+
+void wdtInitFxn(void) 
+{
+	Watchdog_Params wp;
+	
+	Watchdog_init();
+	Watchdog_Params_init(&wp);
+	wp.callbackFxn    = (Watchdog_Callback)wdtCallback;
+	wp.debugStallMode = Watchdog_DEBUG_STALL_ON;
+	wp.resetMode      = Watchdog_RESET_ON;
+ 
+	watchdog = Watchdog_open(CC2650_WATCHDOG0, &wp);
+	Watchdog_setReload(watchdog, 3500000); // 1sec (WDT runs always at 48MHz/32)
+}
+#endif
 /*********************************************************************
 *********************************************************************/

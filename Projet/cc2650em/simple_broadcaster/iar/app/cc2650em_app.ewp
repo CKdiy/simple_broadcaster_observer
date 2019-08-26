@@ -218,6 +218,7 @@
                     <state>ICALL_MAX_NUM_TASKS=3</state>
                     <state>xPOWER_SAVING</state>
                     <state>USE_ICALL</state>
+                    <state>IWDG_ENABLE</state>
                 </option>
                 <option>
                     <name>CCPreprocFile</name>
@@ -2180,6 +2181,21 @@
             </file>
             <file>
                 <name>$TI_RTOS_DRIVERS_BASE$\ti\drivers\dma\UDMACC26XX.h</name>
+            </file>
+        </group>
+        <group>
+            <name>WDT</name>
+            <file>
+                <name>$TI_RTOS_DRIVERS_BASE$\ti\drivers\Watchdog.c</name>
+            </file>
+            <file>
+                <name>$TI_RTOS_DRIVERS_BASE$\ti\drivers\Watchdog.h</name>
+            </file>
+            <file>
+                <name>$TI_RTOS_DRIVERS_BASE$\ti\drivers\watchdog\WatchdogCC26XX.c</name>
+            </file>
+            <file>
+                <name>$TI_RTOS_DRIVERS_BASE$\ti\drivers\watchdog\WatchdogCC26XX.h</name>
             </file>
         </group>
     </group>
